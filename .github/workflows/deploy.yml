@@ -31,46 +31,58 @@ jobs:
       - name: Build Production Assets
         run: npm run build
 
-      # Step 5: Deploy to permanent directory and serve via PM2 on port 5173
-      - name: Deploy & Start on Port 5173
+      # Step 5: Deploy to /var/www/myapp and run as a permanent systemd background service
+      - name: Deploy & Start Service on Port 5173
         run: |
           DEPLOY_DIR="/var/www/myapp"
           echo "🚀 Deploying static files to ${DEPLOY_DIR}..."
 
-          # Create permanent directory on EC2
+          # 1. Create permanent directory
           sudo mkdir -p ${DEPLOY_DIR}
 
-          # Clean and copy new build assets
+          # 2. Copy production assets
           sudo rm -rf ${DEPLOY_DIR}/*
           sudo cp -r dist/* ${DEPLOY_DIR}/
-
-          # Set ownership to the runner user
           sudo chown -R $USER:$USER ${DEPLOY_DIR}
           sudo chmod -R 755 ${DEPLOY_DIR}
 
-          # Ensure PM2 and serve are installed globally
-          sudo npm install -g pm2 serve
+          # 3. Ensure 'serve' static server is installed globally
+          sudo npm install -g serve
 
-          echo "🚀 Starting PM2 static server on port 5173..."
-          
-          # Delete previous PM2 process if exists
-          pm2 delete myapp 2>/dev/null || true
+          # 4. Create systemd service (so GitHub Actions runner cannot kill the background process)
+          echo "⚙️ Configuring systemd service 'myapp.service'..."
+          sudo bash -c "cat <<'EOF' > /etc/systemd/system/myapp.service
+          [Unit]
+          Description=Lumina Library Management Static Server
+          After=network.target
 
-          # Serve permanent absolute path on 5173 with SPA mode
-          pm2 serve ${DEPLOY_DIR} 5173 --name "myapp" --spa
+          [Service]
+          Type=simple
+          User=ubuntu
+          WorkingDirectory=/var/www/myapp
+          ExecStart=/usr/bin/env npx serve -s /var/www/myapp -l 5173
+          Restart=always
+          RestartSec=3
+          Environment=PATH=/usr/local/bin:/usr/bin:/bin:$PATH
 
-          # Save PM2 process list so it stays up across reboots
-          pm2 save
+          [Install]
+          WantedBy=multi-user.target
+          EOF"
 
-          # Verification output
+          # 5. Reload systemd daemon, enable on boot, and start the service
+          sudo systemctl daemon-reload
+          sudo systemctl enable myapp
+          sudo systemctl restart myapp
+
+          # 6. Verification: Check service status and port listener
           sleep 2
-          echo "📋 PM2 Process Status:"
-          pm2 list
+          echo "📋 Service Status:"
+          sudo systemctl status myapp --no-pager
 
-          echo "🔍 Checking port 5173 listening status:"
-          (ss -tulpn | grep 5173) || (lsof -i :5173) || (netstat -tuln | grep 5173) || true
+          echo "🔍 Checking port 5173 listener:"
+          sudo ss -tulpn | grep 5173 || sudo lsof -i :5173
 
-          echo "🌐 Testing local HTTP response on port 5173:"
-          curl -I http://127.0.0.1:5173 || true
+          echo "🌐 Testing local HTTP response:"
+          curl -I http://127.0.0.1:5173
 
           echo "✅ Lumina Library Management is running on port 5173!"
