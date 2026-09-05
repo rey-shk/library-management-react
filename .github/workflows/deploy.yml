@@ -12,40 +12,65 @@ jobs:
     runs-on: [self-hosted, ec2-runner]
 
     steps:
-      # Step 1: Checkout repository code on the EC2 runner
+      # Step 1: Checkout repository code
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # Step 2: Setup Node.js runtime
+      # Step 2: Setup Node.js
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: 'npm'
 
       # Step 3: Install project dependencies
       - name: Install Dependencies
         run: npm ci
 
-      # Step 4: Build production assets (TypeScript check & Vite build)
+      # Step 4: Build production assets
       - name: Build Production Assets
         run: npm run build
 
-      # Step 5: Start / Restart the application on Port 5173 using PM2
+      # Step 5: Deploy to permanent directory and serve via PM2 on port 5173
       - name: Deploy & Start on Port 5173
         run: |
-          echo "🚀 Starting static production server on port 5173..."
+          DEPLOY_DIR="/var/www/myapp"
+          echo "🚀 Deploying static files to ${DEPLOY_DIR}..."
 
-          # Ensure PM2 process manager is installed
-          command -v pm2 >/dev/null 2>&1 || npm install -g pm2
+          # Create permanent directory on EC2
+          sudo mkdir -p ${DEPLOY_DIR}
 
-          # Remove previous process instance if running
+          # Clean and copy new build assets
+          sudo rm -rf ${DEPLOY_DIR}/*
+          sudo cp -r dist/* ${DEPLOY_DIR}/
+
+          # Set ownership to the runner user
+          sudo chown -R $USER:$USER ${DEPLOY_DIR}
+          sudo chmod -R 755 ${DEPLOY_DIR}
+
+          # Ensure PM2 and serve are installed globally
+          sudo npm install -g pm2 serve
+
+          echo "🚀 Starting PM2 static server on port 5173..."
+          
+          # Delete previous PM2 process if exists
           pm2 delete myapp 2>/dev/null || true
 
-          # Serve the production 'dist' directory on port 5173 with SPA routing support
-          pm2 serve dist 5173 --name "myapp" --spa
+          # Serve permanent absolute path on 5173 with SPA mode
+          pm2 serve ${DEPLOY_DIR} 5173 --name "myapp" --spa
 
-          # Save PM2 state so the server automatically restarts if EC2 reboots
+          # Save PM2 process list so it stays up across reboots
           pm2 save
+
+          # Verification output
+          sleep 2
+          echo "📋 PM2 Process Status:"
+          pm2 list
+
+          echo "🔍 Checking port 5173 listening status:"
+          (ss -tulpn | grep 5173) || (lsof -i :5173) || (netstat -tuln | grep 5173) || true
+
+          echo "🌐 Testing local HTTP response on port 5173:"
+          curl -I http://127.0.0.1:5173 || true
 
           echo "✅ Lumina Library Management is running on port 5173!"
