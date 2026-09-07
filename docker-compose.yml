@@ -1,0 +1,10 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: library-management-app:latest
+    container_name: library-app
+    restart: unless-stopped
+    ports:
+      - "5173:5173"

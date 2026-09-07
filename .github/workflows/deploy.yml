@@ -1,4 +1,4 @@
-name: Deploy to EC2 (Port 5173)
+name: Deploy Docker to EC2 (Port 5173)
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
 
 jobs:
   deploy:
-    name: Build & Run on EC2 (Port 5173)
+    name: Build & Deploy Docker Container on EC2
     runs-on: [self-hosted, ec2-runner]
 
     steps:
@@ -16,73 +16,45 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # Step 2: Setup Node.js
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: 'npm'
-
-      # Step 3: Install project dependencies
-      - name: Install Dependencies
-        run: npm ci
-
-      # Step 4: Build production assets
-      - name: Build Production Assets
-        run: npm run build
-
-      # Step 5: Deploy to /var/www/myapp and run as a permanent systemd background service
-      - name: Deploy & Start Service on Port 5173
+      # Step 2: Stop old systemd service if present (to avoid port 5173 conflict)
+      - name: Stop Old Systemd Service (if exists)
         run: |
-          DEPLOY_DIR="/var/www/myapp"
-          echo "🚀 Deploying static files to ${DEPLOY_DIR}..."
+          sudo systemctl stop myapp 2>/dev/null || true
+          sudo systemctl disable myapp 2>/dev/null || true
 
-          # 1. Create permanent directory
-          sudo mkdir -p ${DEPLOY_DIR}
+      # Step 3: Build Docker Image
+      - name: Build Docker Image
+        run: |
+          echo "🐳 Building Docker image..."
+          docker build -t library-app:latest .
 
-          # 2. Copy production assets
-          sudo rm -rf ${DEPLOY_DIR}/*
-          sudo cp -r dist/* ${DEPLOY_DIR}/
-          sudo chown -R $USER:$USER ${DEPLOY_DIR}
-          sudo chmod -R 755 ${DEPLOY_DIR}
+      # Step 4: Run Docker Container on Port 5173
+      - name: Run Container on Port 5173
+        run: |
+          echo "🛑 Stopping existing container if running..."
+          docker stop library-app 2>/dev/null || true
+          docker rm library-app 2>/dev/null || true
 
-          # 3. Ensure 'serve' static server is installed globally
-          sudo npm install -g serve
+          echo "🚀 Starting new container on port 5173..."
+          docker run -d \
+            --name library-app \
+            --restart unless-stopped \
+            -p 5173:5173 \
+            library-app:latest
 
-          # 4. Create systemd service (so GitHub Actions runner cannot kill the background process)
-          echo "⚙️ Configuring systemd service 'myapp.service'..."
-          sudo bash -c "cat <<'EOF' > /etc/systemd/system/myapp.service
-          [Unit]
-          Description=Lumina Library Management Static Server
-          After=network.target
+      # Step 5: Clean up dangling images to save EC2 disk space
+      - name: Prune Dangling Images
+        run: |
+          docker image prune -f
 
-          [Service]
-          Type=simple
-          User=ubuntu
-          WorkingDirectory=/var/www/myapp
-          ExecStart=/usr/bin/env npx serve -s /var/www/myapp -l 5173
-          Restart=always
-          RestartSec=3
-          Environment=PATH=/usr/local/bin:/usr/bin:/bin:$PATH
+      # Step 6: Verify deployment
+      - name: Verify Container & HTTP Health
+        run: |
+          sleep 5
+          echo "📋 Running Containers:"
+          docker ps -f name=library-app
 
-          [Install]
-          WantedBy=multi-user.target
-          EOF"
+          echo "🌐 Testing HTTP Response:"
+          curl -I --retry 3 --retry-delay 2 http://127.0.0.1:5173 || exit 1
 
-          # 5. Reload systemd daemon, enable on boot, and start the service
-          sudo systemctl daemon-reload
-          sudo systemctl enable myapp
-          sudo systemctl restart myapp
-
-          # 6. Verification: Check service status and port listener
-          sleep 2
-          echo "📋 Service Status:"
-          sudo systemctl status myapp --no-pager
-
-          echo "🔍 Checking port 5173 listener:"
-          sudo ss -tulpn | grep 5173 || sudo lsof -i :5173
-
-          echo "🌐 Testing local HTTP response:"
-          curl -I http://127.0.0.1:5173
-
-          echo "✅ Lumina Library Management is running on port 5173!"
+          echo "✅ Application successfully deployed with Docker on port 5173!"
