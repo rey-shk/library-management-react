@@ -26,17 +26,17 @@ jobs:
       - name: Build Docker Image
         run: |
           echo "🐳 Building Docker image..."
-          docker build -t library-app:latest .
+          sudo docker build -t library-app:latest .
 
       # Step 4: Run Docker Container on Port 5173
       - name: Run Container on Port 5173
         run: |
           echo "🛑 Stopping existing container if running..."
-          docker stop library-app 2>/dev/null || true
-          docker rm library-app 2>/dev/null || true
+          sudo docker stop library-app 2>/dev/null || true
+          sudo docker rm library-app 2>/dev/null || true
 
           echo "🚀 Starting new container on port 5173..."
-          docker run -d \
+          sudo docker run -d \
             --name library-app \
             --restart unless-stopped \
             -p 5173:5173 \
@@ -45,14 +45,14 @@ jobs:
       # Step 5: Clean up dangling images to save EC2 disk space
       - name: Prune Dangling Images
         run: |
-          docker image prune -f
+          sudo docker image prune -f
 
       # Step 6: Verify deployment
       - name: Verify Container & HTTP Health
         run: |
           sleep 5
           echo "📋 Running Containers:"
-          docker ps -f name=library-app
+          sudo docker ps -f name=library-app
 
           echo "🌐 Testing HTTP Response:"
           curl -I --retry 3 --retry-delay 2 http://127.0.0.1:5173 || exit 1
